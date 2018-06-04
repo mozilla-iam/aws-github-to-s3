@@ -1,0 +1,9 @@
+{
+  "name": "aws-github-to-s3",
+  "version": "1.0.0",
+  "description": "This project allows us to receive webhooks from GitHub and trigger a CodePipeline job",
+  "dependencies": {
+    "serverless-python-requirements": "^4.0.4"
+  },
+  "devDependencies": {}
+}
