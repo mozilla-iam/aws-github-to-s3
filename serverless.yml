@@ -1,32 +1,18 @@
-# Welcome to Serverless!
-#
-# This file is the main config file for your service.
-# It's very minimal at this point and uses default values.
-# You can always add more config options for more control.
-# We've included some commented out config examples here.
-# Just uncomment any of them to get that config option.
-#
-# For full config options, check the docs:
-#    docs.serverless.com
-#
-# Happy Coding!
 
-service: aws-python # NOTE: update this with your service name
-
-# You can pin your service to only deploy with a specific Serverless version
-# Check out our docs for more details
-# frameworkVersion: "=X.X.X"
+service: git-pull-s3
 
 provider:
   name: aws
   runtime: python2.7
+  region: us-east-1
 
 # you can overwrite defaults here
 #  stage: dev
-#  region: us-east-1
 
 plugins:
   - serverless-python-requirements
+
+# Required to include pygit2 and libgit2 dependencies
 
 custom:
   pythonRequirements:
@@ -49,63 +35,222 @@ custom:
 #            - "Ref" : "ServerlessDeploymentBucket"
 #            - "/*"
 
-# you can define service wide environment variables here
-#  environment:
-#    variable1: value1
-
-# you can add packaging information here
-#package:
-#  include:
-#    - include-me.py
-#    - include-me-dir/**
-#  exclude:
-#    - exclude-me.py
-#    - exclude-me-dir/**
-
 functions:
   gitPullS3:
     handler: handler.lambda_handler
 
-#    The following are a few example events you can configure
-#    NOTE: Please make sure to change your handler code to work with those events
-#    Check the event documentation for details
-#    events:
-#      - http:
-#          path: users/create
-#          method: get
-#      - s3: ${env:BUCKET}
-#      - schedule: rate(10 minutes)
-#      - sns: greeter-topic
-#      - stream: arn:aws:dynamodb:region:XXXXXX:table/foo/stream/1970-01-01T00:00:00.000
-#      - alexaSkill
-#      - iot:
-#          sql: "SELECT * FROM 'some_topic'"
-#      - cloudwatchEvent:
-#          event:
-#            source:
-#              - "aws.ec2"
-#            detail-type:
-#              - "EC2 Instance State-change Notification"
-#            detail:
-#              state:
-#                - pending
-#      - cloudwatchLog: '/aws/lambda/hello'
-#      - cognitoUserPool:
-#          pool: MyUserPool
-#          trigger: PreSignUp
+# Adding CloudFormation resource templates
 
-#    Define function environment variables here
-#    environment:
-#      variable2: value2
-
-# you can add CloudFormation resource templates here
-#resources:
-#  Resources:
-#    NewResource:
-#      Type: AWS::S3::Bucket
-#      Properties:
-#        BucketName: my-new-bucket
-#  Outputs:
-#     NewOutput:
-#       Description: "Description for the output"
-#       Value: "Some output value"
+resources:
+  Resources:
+    OutputBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName:
+          Fn::Join:
+            - "-"
+            - - ${self:service}
+              - ${self:provider.stage}
+        VersioningConfiguration:
+          Status: Enabled
+        Tags: []
+    GitPullRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Path: /
+        Policies:
+          - PolicyName: git2cp-gitpull
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:*
+                  Resource: 
+                    - '*'
+                - Effect: Allow
+                  Action:
+                    - s3:PutObject
+                    - s3:GetObject
+                  Resource:
+                    Fn::Join:
+                      - ""
+                      - - "arn:aws:s3:::"
+                        - Ref: OutputBucket
+                        - "/*"
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - arn:aws:logs:*:*:*
+    WebHookRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: apigateway.amazonaws.com
+              Action: sts:AssumeRole
+        Path: /
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+        Policies:
+          - PolicyName: git2cp-webhook
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - lambda:InvokeAsync
+                    - lambda:InvokeFunction
+                  Resource:
+                    - "*"
+    WebHookApi:
+      Type: AWS::ApiGateway::RestApi
+      Properties:
+        Body:
+          swagger: '2.0'
+          info:
+            version: '2016-07-26T07:34:38Z'
+            title:
+              Fn::Join:
+                - ''
+                - - G2CP-
+                  - ${self:service}
+                  - "-"
+                  - ${self:provider.stage}
+          schemes:
+            - https
+          paths:
+            /gitpull:
+              post:
+                consumes:
+                  - application/json
+                produces:
+                  - application/json
+                responses:
+                  '200':
+                    description: 200 response
+                    schema:
+                      $ref: '#/definitions/Empty'
+                x-amazon-apigateway-integration:
+                  type: aws
+                  credentials:
+                    Fn::GetAtt: [ WebHookRole, "Arn" ]
+                  responses:
+                    default:
+                      statusCode: '200'
+                  requestParameters:
+                    integration.request.header.X-Amz-Invocation-Type: '''Event'''
+                  passthroughBehavior: when_no_templates
+                  httpMethod: POST
+                  uri:
+                    Fn::Join:
+                    - ''
+                    - - 'arn:aws:apigateway:'
+                      - ${self:provider.region}
+                      - ':lambda:path//2015-03-31/functions/'
+                      - 'arn:aws:lambda:'
+                      - Ref: 'AWS::Region'
+                      - ':'
+                      - Ref: 'AWS::AccountId'
+                      - ':function:'
+                      - ${self:service}
+                      - '-'
+                      - ${self:provider.stage}
+                      - '-gitPullS3'
+                      - '/invocations'
+                  requestTemplates:
+                    application/json:
+                      Fn::Join:
+                      - ''
+                      - - "#set($allParams = $input.params())\n"
+                        - "{\n"
+                        - "\"body-json\" : $input.json('$'),\n"
+                        - "\"params\" : {\n"
+                        - "#foreach($type in $allParams.keySet())\n"
+                        - "    #set($params = $allParams.get($type))\n"
+                        - "\"$type\" : {\n"
+                        - "    #foreach($paramName in $params.keySet())\n"
+                        - "    \"$paramName\" : \"$util.escapeJavaScript($params.get($paramName))\"\
+                          \n"
+                        - "        #if($foreach.hasNext),#end\n"
+                        - "    #end\n"
+                        - "}\n"
+                        - "    #if($foreach.hasNext),#end\n"
+                        - "#end\n"
+                        - "},\n"
+                        - "\"stage-variables\" : {\n"
+                        - "#foreach($key in $stageVariables.keySet())\n"
+                        - "\"$key\" : \"$util.escapeJavaScript($stageVariables.get($key))\"\
+                          \n"
+                        - "    #if($foreach.hasNext),#end\n"
+                        - "#end\n"
+                        - "},\n"
+                        - "\"context\" : {\n"
+                        - "    \"account-id\" : \"$context.identity.accountId\",\n"
+                        - "    \"api-id\" : \"$context.apiId\",\n"
+                        - "    \"api-key\" : \"$context.identity.apiKey\",\n"
+                        - "    \"authorizer-principal-id\" : \"$context.authorizer.principalId\"\
+                          ,\n"
+                        - "    \"caller\" : \"$context.identity.caller\",\n"
+                        - "    \"cognito-authentication-provider\" : \"$context.identity.cognitoAuthenticationProvider\"\
+                          ,\n"
+                        - "    \"cognito-authentication-type\" : \"$context.identity.cognitoAuthenticationType\"\
+                          ,\n"
+                        - "    \"cognito-identity-id\" : \"$context.identity.cognitoIdentityId\"\
+                          ,\n"
+                        - "    \"cognito-identity-pool-id\" : \"$context.identity.cognitoIdentityPoolId\"\
+                          ,\n"
+                        - "    \"http-method\" : \"$context.httpMethod\",\n"
+                        - "    \"stage\" : \"$context.stage\",\n"
+                        - "    \"source-ip\" : \"$context.identity.sourceIp\",\n"
+                        - "    \"user\" : \"$context.identity.user\",\n"
+                        - "    \"user-agent\" : \"$context.identity.userAgent\",\n"
+                        - "    \"user-arn\" : \"$context.identity.userArn\",\n"
+                        - "    \"request-id\" : \"$context.requestId\",\n"
+                        - "    \"resource-id\" : \"$context.resourceId\",\n"
+                        - "    \"resource-path\" : \"$context.resourcePath\",\n"
+                        - "    \"allowed-ips\" : \"$stageVariables.allowedips\",\n"
+                        - "    \"api-secrets\" : \"$stageVariables.apisecrets\",\n"
+                        - "    \"output-bucket\" : \"$stageVariables.outputbucket\",\n"
+                        - "    \"raw-body\" : \"$util.escapeJavaScript($input.body).replace(\"\
+                          \\'\",\"'\")\"\n"
+                        - "    }\n"
+                        - '}'
+          securityDefinitions:
+            sigv4:
+              type: apiKey
+              name: Authorization
+              in: header
+              x-amazon-apigateway-authtype: awsSigv4
+          definitions:
+            Empty:
+              type: object
+    WebHookApiDeployment:
+      Type: AWS::ApiGateway::Deployment
+      Properties:
+        RestApiId:
+          Ref: WebHookApi
+        StageName: DummyStage
+    WebHookApiProdStage:
+      Type: AWS::ApiGateway::Stage
+      Properties:
+        DeploymentId:
+          Ref: WebHookApiDeployment
+        RestApiId:
+          Ref: WebHookApi
+        StageName: Prod
+        Variables:
+          outputbucket: OutputBucket
