@@ -37,6 +37,7 @@ custom:
 functions:
   gitPullS3:
     handler: handler.lambda_handler
+    role: GitPullRole
 
 # Adding CloudFormation resource templates
 
@@ -69,11 +70,6 @@ resources:
             PolicyDocument:
               Version: '2012-10-17'
               Statement:
-                - Effect: Allow
-                  Action:
-                    - s3:*
-                  Resource: 
-                    - '*'
                 - Effect: Allow
                   Action:
                     - s3:PutObject
