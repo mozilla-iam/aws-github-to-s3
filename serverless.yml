@@ -250,3 +250,9 @@ resources:
         Variables:
           outputbucket:
             Ref: OutputBucket
+  Outputs:
+    OutputBucketExport:
+      Value:
+        Ref: OutputBucket
+      Export:
+        Name: github-to-s3-outputbucket
