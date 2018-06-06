@@ -39,12 +39,16 @@ def lambda_handler(event, context):
 
     repo_path = '/tmp/%s' % full_name
 
+    try:
+        shutil.rmtree(repo_path)
+        os.remove(zipfile)
+    except:
+        print('Nothing to remove')
+        pass
+
     clone_repository(repo_url, repo_path, checkout_branch=repo_branch)
     zipfile = zip_repo(repo_path, full_name)
     push_s3(zipfile, full_name, outputbucket)
-
-    shutil.rmtree(repo_path)
-    os.remove(zipfile)
 
     return 'Successfully updated %s' % full_name
 
