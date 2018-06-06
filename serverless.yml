@@ -5,9 +5,7 @@ provider:
   name: aws
   runtime: python2.7
   region: us-east-1
-
-# you can overwrite defaults here
-#  stage: dev
+  stage: ${env:STAGE}
 
 plugins:
   - serverless-python-requirements
@@ -15,6 +13,7 @@ plugins:
 # Required to include pygit2 and libgit2 dependencies
 
 custom:
+  stage: ${env:STAGE}
   pythonRequirements:
     dockerFile: Dockerfile
     dockerizePip: true
@@ -253,4 +252,5 @@ resources:
           Ref: WebHookApi
         StageName: Prod
         Variables:
-          outputbucket: OutputBucket
+          outputbucket:
+            Ref: OutputBucket
